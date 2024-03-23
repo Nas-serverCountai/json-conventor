@@ -1,21 +1,34 @@
 # Use the official Python image as the base image
-FROM python
+FROM ubuntu:latest
 
 # Set the working directory inside the container
 WORKDIR /app
 
+
 # Copy the application code into the container
 COPY homepage.py /app/
+COPY Home/ app/ 
+COPY add_users.py /app/
+COPY login_logs.json /app/
 
-# Install any required dependencies
-RUN pip install psycopg2-binary 
-RUN pip install wheel
-COPY requirements.txt requirements.txt
 
-RUN pip install -r requirements.txt
+# # Define environment variables for PostgreSQL
+# ENV POSTGRES_HOST=localhost
+# ENV POSTGRES_PORT=5432
+# ENV POSTGRES_USER=postgres
+# ENV POSTGRES_PASSWORD=vishnu123
+# ENV POSTGRES_DB=naserver
+RUN apt-get update 
+
+
+# Install Python dependencies
+RUN pip3 install -r requirements.txt
+
 
 # Expose the port that Streamlit listens on
 EXPOSE 8501
 
-# Command to run the Streamlit application
-CMD ["streamlit", "run", "homepage.py"]
+# Mount volume for data exchange
+VOLUME /app/data
+# Command to run Streamlit app
+#CMD ["streamlit", "run", "--server.port", "8501", "homepage.py"]
