@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  streamlit:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - data_exchange_volume:/app/data
+
+volumes:
+  data_exchange_volume:

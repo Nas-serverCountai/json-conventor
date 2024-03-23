@@ -1,0 +1,7 @@
+sudo docker run --restart=always -it --name  nasserver-streamlit-1 --network=host -e "DB_DBNAME=knitting" -e "DB_PORT=5432" -e "DB_USER=postgres" -e "DB_PASS=55555" -e "DB_HOST=127.0.0.1" --privileged ubuntu_image:latest
+
+
+sudo docker run --restart=always -it --name nas -v /home/kniti/Downloads/needln:/app/ --network=host -e "DB_DBNAME=knitting" -e "DB_PORT=5432" -e "DB_USER=postgres" -e "DB_PASS=55555" -e "DB_HOST=127.0.0.1" --privileged nasserver:latest
+
+
+sudo docker run --restart=always -it --name nasserver-streamlit-3 --network=host  -e "DB_DBNAME=knitting" -e "DB_PORT=5432" -e "DB_USER=postgres" -e "DB_PASS=55555" -e "DB_HOST=127.0.0.1" --privileged  -v data_exchange_volume:/app/data nasserver-streamlit:latest
