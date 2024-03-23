@@ -1,17 +1,18 @@
 import streamlit as st
 import json
-from datetime import datetime
+from datetime import datetime, timedelta,timezone
 import psycopg2
 import os
-import hashlib
+import requests
+# import hashlib
 
 ######################################################################LOGIN PAGE ##################################################################################
 
 # Database connection
 conn = psycopg2.connect(
-    database="Annotation_department",
+    database="knitting",
     user="postgres",
-    password="vishnu123",
+    password="55555",
     host="localhost",
     port="5432"
 )
@@ -39,46 +40,48 @@ def create_login_logs_table(conn):
         st.error(f"Error creating login logs table: {e}")
 
 # Function to check if a user exists
-def user_exists(username):
-    cur.execute("SELECT username FROM users WHERE username = %s", (username,))
-    return cur.fetchone() is not None
+# def user_exists(username, password):
+#     cur.execute("SELECT username FROM users WHERE username = %s AND password_hash = %s", (username, hash_password(password)))
+#     return cur.fetchone() is not None
 
 
 # Login Function
+# Login Function
 def login(username, password):
-    # Retrieve the hashed password from the database based on the username
-    cur.execute("SELECT password_hash FROM users WHERE username = %s", (username,))
-    hashed_password = cur.fetchone()
+    # Retrieve the password from the database based on the username
+    cur.execute("SELECT password FROM users WHERE username = %s", (username,))
+    stored_password = cur.fetchone()
     
-    if hashed_password:
-        # Check if the provided password matches the hashed password
-        if hash_password(password) == hashed_password[0]:
+    if stored_password:
+        # Check if the provided password matches the stored password
+        if password == stored_password[0]:
             return True
     return False
 
 
-# Registration Function
-def register(username, password):
-    # Check if the user already exists
-    if user_exists(username):
-        st.error("User already exists. Please choose a different username.")
-        return False
 
-    # Hash the password using hashlib
-    hashed_password = hash_password(password)
+# # Registration Function
+# def register(username, password):
+#     # Check if the user already exists
+#     if user_exists(username):
+#         st.error("User already exists. Please choose a different username.")
+#         return False
 
-    try:
-        # Insert username and hashed password into the database
-        cur.execute("""
-            INSERT INTO users (username, password_hash) VALUES (%s, %s)
-        """, (username, hashed_password))
-        conn.commit()
-        return True
+#     # Hash the password using hashlib
+#     hashed_password = hash_password(password)
 
-    except psycopg2.Error as e:
-        # Handle database insertion error
-        st.error(f"Error registering user: {e}")
-        return False
+#     try:
+#         # Insert username and hashed password into the database
+#         cur.execute("""
+#             INSERT INTO users (username, password_hash) VALUES (%s, %s)
+#         """, (username, hashed_password))
+#         conn.commit()
+#         return True
+
+#     except psycopg2.Error as e:
+#         # Handle database insertion error
+#         st.error(f"Error registering user: {e}")
+#         return False
 
 # Log Login Function
 def log_login(username):
@@ -123,50 +126,97 @@ def upload_login_logs_to_postgres(logs):
 
 #############################################################################Json Conventor and postgresDB######################################################################
 
+
+
 # Function to separate and save data to JSON file
-def separate_and_save_to_json(files, select_option, selected_values):
+        
+
+# Function to save files to the Docker volume from a specified directory
+def save_to_volume_from_directory(directory_path):
+    files = os.listdir(directory_path)
+    for file_name in files:
+        file_path = os.path.join(directory_path, file_name)
+        with open(file_path, "rb") as file:
+            file_content = file.read()
+        
+        # Define the path where the file will be saved in the Docker volume
+        save_path_volume = os.path.join("/app/data", file_name)
+
+        # Save the file to the Docker volume
+        with open(save_path_volume, "wb") as f:
+            f.write(file_content)
+
+# Trigger Airflow DAG function
+def trigger_airflow_dag():
+    airflow_dag_url = "http://airflow-webserver:8080/api/v1/dags/send_nas/dagRuns"
+    
+    # Set execution date to current time plus one minute
+    execution_date = datetime.now(timezone.utc) + timedelta(minutes=1)
+    payload = {
+        "conf": {},
+        "execution_date": execution_date.isoformat()  # Set execution date to one minute in the future
+    }
+    try:
+        response = requests.post(airflow_dag_url, json=payload)
+        response.raise_for_status()
+        st.success("Airflow DAG triggered successfully!")
+    except Exception as e:
+        st.error(f"Error triggering Airflow DAG: {e}")
+
+def separate_and_upload_to_postgres(files, select_option, selected_values):
     key_order = ['millname', 'machine_number_id', 'roll_id', 'revolution', 'cam', 'Date', 'Hours', 'mins', 'seconds', 'angle', 'timestamp']
-    all_data = []
 
     for uploaded_file in files:
         with uploaded_file:
             json_data = json.load(uploaded_file)
             imagePath = json_data.get("imagePath", "")
             image_info = imagePath.split('_')
-
-            print("Image Info:", image_info)  # Print image_info for debugging
+            print("Image Info:", image_info)  
 
             if len(image_info) >= len(key_order):
                 data_dict = dict(zip(key_order, image_info))
 
-                timestamp = f"{data_dict['Date']}_{data_dict['Hours']}_{data_dict['mins']}-{data_dict['seconds']}"  # Joining the date, hour, min, sec, to form timestamp
+                timestamp = f"{data_dict['Date']}_{data_dict['Hours']}_{data_dict['mins']}-{data_dict['seconds']}"
                 data_dict['timestamp'] = datetime.strptime(timestamp, "%Y-%m-%d_%H_%M-%S-%f").strftime("%Y-%m-%d %H:%M:%S.%f")
 
-                data_dict.pop('Date', None)  # Removing the keys after forming timestamp
+                data_dict.pop('Date', None)  
                 data_dict.pop('Hours', None)
                 data_dict.pop('mins', None)
                 data_dict.pop('seconds', None)
-                data_dict = {**data_dict, 'angle': data_dict.pop('angle'), 'timestamp': data_dict['timestamp']}  # Reorder the data dictionary so that 'timestamp' comes before 'angle'
+                data_dict = {**data_dict, 'angle': data_dict.pop('angle'), 'timestamp': data_dict['timestamp']}
 
                 data_dict['Data_model'] = select_option
 
                 # Add selected dropdown values to data_dict
                 data_dict.update(selected_values)
 
-                all_data.append(data_dict)
-            else:
-                print("Invalid imagePath format:", imagePath)
+                try:
+                    cur.execute("""
+                        INSERT INTO annotation_details (millname, machine_number_id, roll_id, revolution, cam, timestamp, angle, Data_model, 
+                            unitname, machine_brand, machine_types, Machine_dia, knit_type, fabric_material, 
+                            counts, deniers, colours, fabric_rolling_type, background, machine_gauges, 
+                            needle_drop, cam_type, lens_type)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        data_dict['millname'], data_dict['machine_number_id'], data_dict['roll_id'], data_dict['revolution'], data_dict['cam'], 
+                        data_dict['timestamp'], data_dict['angle'], data_dict['Data_model'], data_dict['unitname'], data_dict['machine_brand'], 
+                        data_dict['machine_types'], data_dict['Machine_dia'], data_dict['knit_type'], data_dict['fabric_material'], data_dict['counts'], 
+                        data_dict['deniers'], data_dict['colours'], data_dict['fabric_rolling_type'], data_dict['background'], data_dict['machine_gauges'], 
+                        data_dict['needle_drop'], data_dict['cam_type'], data_dict['lens_type']
+                    ))
+                    conn.commit()
+                    st.session_state['upload_successful'] = True  # Set upload_successful state to True
 
-    with open('parsed_data.json', 'w') as f:
-        json.dump(all_data, f, indent=4)
+                except (Exception, psycopg2.DatabaseError) as error:
+                    st.error(f"Error uploading data: {error}")
 
-    st.success("Data from all files separated and saved as a single JSON file.")
 
-def create_table(conn):
+# Function to create annotation_details table if not exists
+def create_annotation_details_table(conn):
     try:
         cur = conn.cursor()
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS Annotation_details (
+            CREATE TABLE IF NOT EXISTS annotation_details (
                 millname VARCHAR(50),
                 machine_number_id VARCHAR(50),
                 roll_id VARCHAR(50),
@@ -193,12 +243,21 @@ def create_table(conn):
             );
         """)
         conn.commit()
-        st.success("Table created successfully!")
     except psycopg2.Error as e:
         st.error(f"Error creating table: {e}")
 
+create_annotation_details_table(conn)
+
+# Function to check if the table exists
+def table_exists(table_name):
+    cur.execute(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{table_name}')")
+    return cur.fetchone()[0]
+
 # Function to upload data to PostgreSQL
 def upload_data_to_postgres(json_file_path):
+    if not table_exists("annotation_details"):
+        create_annotation_details_table(conn)  # Create the table if it doesn't exist
+
     try:
         with open(json_file_path, "r") as file:
             data = json.load(file)
@@ -219,37 +278,31 @@ def upload_data_to_postgres(json_file_path):
         conn.commit()
         st.success("Data uploaded successfully!")
 
-        # Clear the content of the JSON file after successful upload
-        with open(json_file_path, 'w') as file:
-            file.write('')
-            st.success("Data file cleared successfully!")
-
     except (Exception, psycopg2.DatabaseError) as error:
+        conn.rollback()  # Rollback the transaction in case of an error
         st.error(f"Error uploading data: {error}")
-
 # Function to hash a password using hashlib
-def hash_password(password):
-    hashed_password = hashlib.sha256(password.encode()).hexdigest()
-    return hashed_password
+# def hash_password(password):
+#     hashed_password = hashlib.sha256(password.encode()).hexdigest()
+#     return hashed_password
 
-# Streamlit app
 def main():
 
     st.sidebar.title("Navigation")
 
-    page = st.sidebar.radio("", ["Register", "Login", "JSON Converter", "Upload to DB"])
+    page = st.sidebar.radio("", [ "Login", "JSON Converter"])
 
-    if page == "Register":
-        st.title("Register Page")
-        new_username = st.text_input("New Username", placeholder="Username",label_visibility="hidden")
-        new_password = st.text_input("New Password", type="password", placeholder="Password",label_visibility="hidden")
-        if st.button("Register"):
-            if register(new_username, new_password):
-                st.success("Registration successful! You can now login.")
-            else:
-                st.error("Registration failed. Please try again.")
+    # if page == "Register":
+    #     st.title("Register Page")
+    #     new_username = st.text_input("New Username", placeholder="Username",label_visibility="hidden")
+    #     new_password = st.text_input("New Password", type="password", placeholder="Password",label_visibility="hidden")
+    #     if st.button("Register"):
+    #         if register(new_username, new_password):
+    #             st.success("Registration successful! You can now login.")
+    #         else:
+    #             st.error("Registration failed. Please try again.")
 
-    elif page == "Login":
+    if page == "Login":
         st.title("Login Page")
         username = st.text_input("Username", placeholder="Username",label_visibility="hidden")
         password = st.text_input("Password", type="password", placeholder="Password",label_visibility="hidden")
@@ -257,11 +310,11 @@ def main():
             if login(username, password):
                 st.success("Login successful!")
                 log_login(username)
-                st.session_state['logged_in'] = True  # Store login status in session state
+                st.session_state['logged_in'] = True  
             else:
                 st.error("Invalid username or password. Please try again.")
 
-    elif not st.session_state.get('logged_in'):  # Check if user is not logged in
+    elif not st.session_state.get('logged_in'): 
         st.error("You must login first.")
         return
 
@@ -297,13 +350,21 @@ def main():
         uploaded_files = st.file_uploader("Upload folder (multiple files)", accept_multiple_files=True, type="json")
 
         if uploaded_files is not None:
-            separate_and_save_to_json(uploaded_files, select_option, selected_values)
+          separate_and_upload_to_postgres(uploaded_files, select_option, selected_values)
+        temp_directory = "/path/to/temporary/directory"
+        for uploaded_file in uploaded_files:
+                with open(os.path.join(temp_directory, uploaded_file.name), "wb") as file:
+                    file.write(uploaded_file.getvalue())
+        save_to_volume_from_directory(temp_directory)
+        if st.session_state.get('upload_successful'):
+         st.success("Data uploaded successfully!")
+        uploaded_files.clear()
+        st.session_state['upload_successful'] = False
 
-    elif page == "Upload to DB":
-        st.title("Data Upload to PostgreSQL")
-
-        if st.button("Upload Data"):
-            upload_data_to_postgres(PARSED_FILE)  # Pass the path to PARSED_FILE
+    # Trigger Airflow DAG button
+        if st.button("Send Data to Nas"):
+           trigger_airflow_dag()
 
 if __name__ == "__main__":
     main()
+
